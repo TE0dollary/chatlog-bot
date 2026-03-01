@@ -29,8 +29,8 @@ go.work.sum
 
 # syncthing files
 .stfolder
+openspec
 
-chatlog
 chatlog-bot
 chatlog.exe
 .idea/
