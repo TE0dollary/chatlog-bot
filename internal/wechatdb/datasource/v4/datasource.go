@@ -2,6 +2,7 @@ package v4
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -64,6 +65,16 @@ func (ds *DataSource) SetCallback(group string, callback func(event fsnotify.Eve
 }
 
 func (ds *DataSource) GetMessages(ctx context.Context, startTime, endTime time.Time, talker string, sender string, keyword string, limit, offset int) ([]*model.Message, error) {
+	if talker == "" {
+		talkerList, err := ds.session.GetTalkersAfter(ctx, startTime)
+		if err != nil {
+			return nil, err
+		}
+		if len(talkerList) == 0 {
+			return []*model.Message{}, nil
+		}
+		talker = strings.Join(talkerList, ",")
+	}
 	return ds.message.GetMessages(ctx, startTime, endTime, talker, sender, keyword, limit, offset)
 }
 

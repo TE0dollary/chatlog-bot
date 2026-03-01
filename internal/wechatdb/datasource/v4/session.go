@@ -3,6 +3,7 @@ package v4
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/TE0dollary/chatlog-bot/internal/errors"
 	"github.com/TE0dollary/chatlog-bot/internal/model"
@@ -70,4 +71,30 @@ func (s *SessionModule) GetSessions(ctx context.Context, key string, limit, offs
 	}
 
 	return sessions, nil
+}
+
+// GetTalkersAfter returns all session usernames whose last message timestamp is at or after t.
+func (s *SessionModule) GetTalkersAfter(ctx context.Context, t time.Time) ([]string, error) {
+	db, err := s.dbm.GetDB(Session)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.QueryContext(ctx,
+		"SELECT username FROM SessionTable WHERE last_timestamp >= ?",
+		t.Unix(),
+	)
+	if err != nil {
+		return nil, errors.QueryFailed("getTalkersAfter", err)
+	}
+	defer rows.Close()
+
+	var talkers []string
+	for rows.Next() {
+		var username string
+		if err := rows.Scan(&username); err != nil {
+			return nil, errors.ScanRowFailed(err)
+		}
+		talkers = append(talkers, username)
+	}
+	return talkers, nil
 }
