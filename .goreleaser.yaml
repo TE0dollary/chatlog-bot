@@ -14,7 +14,6 @@ builds:
       - CGO_ENABLED=1
     goos:
       - darwin
-      - windows
       - linux
     goarch:
       - amd64
@@ -32,18 +31,6 @@ builds:
           - CGO_ENABLED=1
           - CC=oa64-clang
           - CXX=oa64-clang++
-      - goos: windows
-        goarch: amd64
-        env:
-          - CGO_ENABLED=1
-          - CC=x86_64-w64-mingw32-gcc
-          - CXX=x86_64-w64-mingw32-g++
-      - goos: windows
-        goarch: arm64
-        env:
-          - CGO_ENABLED=1
-          - CC=/llvm-mingw/bin/aarch64-w64-mingw32-gcc
-          - CXX=/llvm-mingw/bin/aarch64-w64-mingw32-g++
       - goos: linux
         goarch: amd64
         env:
@@ -59,7 +46,7 @@ builds:
 
 upx:
   - enabled: true
-    goos: [darwin, windows, linux]
+    goos: [darwin, linux]
     goarch: [amd64, arm64]
     compress: best
     lzma: true
@@ -72,9 +59,6 @@ archives:
       {{- .Version }}_
       {{- .Os }}_
       {{- .Arch }}
-    format_overrides:
-      - goos: windows
-        formats: zip
     files:
       - LICENSE
       - README.md
