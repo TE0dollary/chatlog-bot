@@ -43,3 +43,7 @@ docs/notes/
 
 # Runtime data (contains private user info and logs)
 data/
+.ace-tool/
+
+# Build output
+bin/

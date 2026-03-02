@@ -35,6 +35,10 @@ test:
 build:
 	@echo "🔨 Building for current platform..."
 	CGO_ENABLED=1 $(GO) build -trimpath $(LDFLAGS) -o bin/$(BINARY_NAME) main.go
+ifeq ($(shell uname),Darwin)
+	@echo "🔏 Signing binary with debugger entitlement..."
+	@codesign --force --sign - --entitlements entitlements.plist bin/$(BINARY_NAME)
+endif
 
 crossbuild: clean
 	@echo "🌍 Building for multiple platforms..."

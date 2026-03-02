@@ -1,31 +1,21 @@
 package glance
 
 import (
-	"bufio"
 	"fmt"
-	"io"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"time"
 
-	"github.com/rs/zerolog/log"
 	"github.com/TE0dollary/chatlog-bot/internal/errors"
+	"github.com/rs/zerolog/log"
 )
-
-// FIXME 按照 region 读取效率较低，512MB 内存读取耗时约 18s
 
 type Glance struct {
 	PID        uint32
 	MemRegions []MemRegion
-	pipePath   string
 	data       []byte
 }
 
 func NewGlance(pid uint32) *Glance {
 	return &Glance{
-		PID:      pid,
-		pipePath: filepath.Join(os.TempDir(), fmt.Sprintf("chatlog_pipe_%d", time.Now().UnixNano())),
+		PID: pid,
 	}
 }
 
@@ -44,78 +34,40 @@ func (g *Glance) Read() ([]byte, error) {
 		return nil, errors.ErrNoMemoryRegionsFound
 	}
 
-	region := g.MemRegions[0]
+	// 遍历所有内存区域，尝试读取
+	for i, region := range g.MemRegions {
+		size := region.End - region.Start
+		log.Info().
+			Int("region_index", i).
+			Int("total_regions", len(g.MemRegions)).
+			Str("region_type", region.RegionType).
+			Str("start", fmt.Sprintf("0x%x", region.Start)).
+			Str("end", fmt.Sprintf("0x%x", region.End)).
+			Uint64("size", size).
+			Msg("尝试读取内存区域")
 
-	// 1. Create pipe file
-	if err := exec.Command("mkfifo", g.pipePath).Run(); err != nil {
-		return nil, errors.CreatePipeFileFailed(err)
-	}
-	defer os.Remove(g.pipePath)
-
-	// Start a goroutine to read from the pipe
-	dataCh := make(chan []byte, 1)
-	errCh := make(chan error, 1)
-	go func() {
-		// Open pipe for reading
-		file, err := os.OpenFile(g.pipePath, os.O_RDONLY, 0600)
+		data, err := g.readRegion(region)
 		if err != nil {
-			errCh <- errors.OpenPipeFileFailed(err)
-			return
+			log.Warn().
+				Int("region_index", i).
+				Err(err).
+				Msg("读取内存区域失败，尝试下一个区域")
+			continue
 		}
-		defer file.Close()
 
-		// Read all data from pipe
-		data, err := io.ReadAll(file)
-		if err != nil {
-			errCh <- errors.ReadPipeFileFailed(err)
-			return
-		}
-		dataCh <- data
-	}()
-
-	// 2 & 3. Execute lldb command to read memory directly with all parameters
-	size := region.End - region.Start
-	lldbCmd := fmt.Sprintf("lldb -p %d -o \"memory read --binary --force --outfile %s --count %d 0x%x\" -o \"quit\"",
-		g.PID, g.pipePath, size, region.Start)
-
-	cmd := exec.Command("bash", "-c", lldbCmd)
-
-	// Set up stdout pipe for monitoring (optional)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-
-	// Start the command
-	if err := cmd.Start(); err != nil {
-		return nil, errors.RunCmdFailed(err)
-	}
-
-	// Monitor lldb output (optional)
-	go func() {
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			// Uncomment for debugging:
-			// fmt.Println(scanner.Text())
-		}
-	}()
-
-	// Wait for data with timeout
-	select {
-	case data := <-dataCh:
 		g.data = data
-	case err := <-errCh:
-		return nil, errors.ReadMemoryFailed(err)
-	case <-time.After(30 * time.Second):
-		cmd.Process.Kill()
-		return nil, errors.ErrReadMemoryTimeout
+		log.Info().
+			Int("region_index", i).
+			Int("data_size", len(data)).
+			Msg("成功读取内存区域")
+		return g.data, nil
 	}
 
-	// Wait for the command to finish
-	if err := cmd.Wait(); err != nil {
-		// We already have the data, so just log the error
-		log.Err(err).Msg("lldb process exited with error")
-	}
+	return nil, errors.ErrNoMemoryRegionsFound
+}
 
-	return g.data, nil
+// readRegion 使用 Mach VM API 直接读取单个内存区域（替代原有的 lldb 方案）
+func (g *Glance) readRegion(region MemRegion) ([]byte, error) {
+	size := region.End - region.Start
+	return MachReadMemory(g.PID, region.Start, size)
 }
