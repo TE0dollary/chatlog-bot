@@ -130,6 +130,7 @@ func (s *Service) initWebhook() error {
 			log.Error().Err(err).Msgf("set callback %#v failed", hook)
 			return err
 		}
+		hook.Trigger() // 启动时强制触发一次，处理离线期间的消息
 	}
 	return nil
 }

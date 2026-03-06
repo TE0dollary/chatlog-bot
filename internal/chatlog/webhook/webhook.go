@@ -69,7 +69,7 @@ func (s *Service) GetHooks(ctx context.Context, db *wechatdb.DB) []*Group {
 	for group, items := range s.hooks {
 		hooks := make([]Webhook, 0)
 		for _, item := range items {
-			hooks = append(hooks, NewMessageWebhook(item, db, s.config.Host))
+			hooks = append(hooks, NewMessageWebhook(item, db, s.config.Host, s.config.TimeoutMs))
 		}
 		groups = append(groups, NewGroup(ctx, group, hooks, s.config.DelayMs))
 	}
@@ -114,6 +114,14 @@ func (g *Group) Group() string {
 	return g.group
 }
 
+// Trigger 向 channel 发送一个合成事件，用于在启动时强制触发一次 webhook。
+func (g *Group) Trigger() {
+	select {
+	case g.ch <- fsnotify.Event{Name: "startup", Op: fsnotify.Create}:
+	default:
+	}
+}
+
 func (g *Group) loop() {
 	for {
 		select {
@@ -145,13 +153,31 @@ type MessageWebhook struct {
 	lastTime time.Time
 }
 
-func NewMessageWebhook(conf *ctx.WebhookItem, db *wechatdb.DB, host string) *MessageWebhook {
+func NewMessageWebhook(conf *ctx.WebhookItem, db *wechatdb.DB, host string, timeoutMs int64) *MessageWebhook {
+	lastTime := time.Now()
+	if conf.LastTime != "" {
+		if t, err := time.ParseInLocation(time.DateTime, conf.LastTime, time.Local); err == nil {
+			lastTime = t
+		} else {
+			log.Warn().Err(err).Msgf("invalid last_time format for webhook item, falling back to now")
+		}
+	} else if conf.InitialLookback != "" {
+		if d, err := time.ParseDuration(conf.InitialLookback); err == nil {
+			lastTime = time.Now().Add(-d)
+		} else {
+			log.Warn().Err(err).Msgf("invalid initial_lookback format for webhook item, falling back to now")
+		}
+	}
+	timeout := time.Duration(timeoutMs) * time.Millisecond
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
 	m := &MessageWebhook{
 		host:     host,
 		conf:     conf,
-		client:   &http.Client{Timeout: time.Second * 10},
+		client:   &http.Client{Timeout: timeout},
 		db:       db,
-		lastTime: time.Now(),
+		lastTime: lastTime,
 	}
 	return m
 }
@@ -167,7 +193,22 @@ func (m *MessageWebhook) Do(event fsnotify.Event) {
 		return
 	}
 
+	// Always advance lastTime based on all fetched messages to avoid re-fetching.
 	m.lastTime = messages[len(messages)-1].Time.Add(time.Second)
+
+	if m.conf.GroupOnly {
+		filtered := messages[:0]
+		for _, msg := range messages {
+			if msg.IsChatRoom {
+				filtered = append(filtered, msg)
+			}
+		}
+		messages = filtered
+	}
+
+	if len(messages) == 0 {
+		return
+	}
 
 	for _, message := range messages {
 		message.SetContent("host", m.host)
@@ -190,6 +231,7 @@ func (m *MessageWebhook) Do(event fsnotify.Event) {
 	resp, err := m.client.Do(req)
 	if err != nil {
 		log.Error().Err(err).Msgf("post messages failed")
+		return
 	}
 	defer resp.Body.Close()
 

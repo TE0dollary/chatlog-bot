@@ -43,3 +43,4 @@ docs/notes/
 
 # Runtime data (contains private user info and logs)
 data/
+CLAUDE.md
